@@ -1,0 +1,544 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>水果消消乐 (提示+重置版)</title>
+    <style>
+        /* --- CSS 样式部分 --- */
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #fdfbfb 0%, #ebedee 100%);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+            user-select: none;
+            -webkit-user-select: none;
+            touch-action: manipulation; 
+        }
+
+        h2 {
+            color: #ff6b6b;
+            margin: 10px 0;
+            font-size: 2rem;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .info-panel {
+            display: flex;
+            gap: 20px;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+
+        .score-board {
+            font-size: 1.2rem;
+            background: white;
+            padding: 8px 20px;
+            border-radius: 50px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+            color: #333;
+            font-weight: bold;
+        }
+
+        .controls {
+            display: flex;
+            gap: 10px;
+        }
+
+        .btn {
+            padding: 8px 16px;
+            font-size: 1rem;
+            border: none;
+            border-radius: 20px;
+            cursor: pointer;
+            color: white;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            transition: transform 0.1s, opacity 0.2s;
+        }
+        
+        .btn:active { transform: scale(0.95); }
+        
+        .btn-reset { background-color: #4ecdc4; }
+        .btn-hint { background-color: #ffcc5c; color: #333; }
+        .btn:disabled { background-color: #ccc; cursor: not-allowed; color: #666; }
+
+        .grid {
+            display: flex;
+            flex-wrap: wrap;
+            width: 360px; /* 移动端友好尺寸: 8列 * 45px */
+            height: 360px;
+            background-color: #ecc0c0;
+            border-radius: 10px;
+            padding: 5px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+            position: relative;
+        }
+
+        .grid div {
+            height: 45px;
+            width: 45px;
+            font-size: 30px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: grab;
+            transition: transform 0.2s, opacity 0.3s;
+            border-radius: 8px;
+            box-sizing: border-box;
+            z-index: 1;
+        }
+
+        .grid div:hover { background-color: rgba(255, 255, 255, 0.3); }
+        
+        .dragging {
+            opacity: 0.5;
+            transform: scale(1.2);
+            z-index: 10 !important;
+        }
+
+        /* 消除动画 */
+        .fade-out {
+            animation: fadeAndShrink 0.3s forwards;
+        }
+
+        /* 提示高亮动画 */
+        .hint-anim {
+            background-color: rgba(255, 255, 255, 0.8) !important;
+            box-shadow: 0 0 10px 2px yellow;
+            animation: pulse 0.8s infinite alternate;
+            z-index: 5;
+        }
+
+        @keyframes fadeAndShrink {
+            0% { opacity: 1; transform: scale(1); }
+            100% { opacity: 0; transform: scale(0); }
+        }
+
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            100% { transform: scale(1.1); }
+        }
+
+        /* 桌面端适配 */
+        @media (min-width: 600px) {
+            .grid {
+                width: 560px; /* 8 * 70 */
+                height: 560px;
+            }
+            .grid div {
+                height: 70px;
+                width: 70px;
+                font-size: 45px;
+            }
+        }
+
+    </style>
+</head>
+<body>
+
+    <h2>🍎 水果消消乐 🍇</h2>
+    
+    <div class="info-panel">
+        <div class="score-board">得分: <span id="score">0</span></div>
+        <div class="controls">
+            <button class="btn btn-reset" id="btn-reset">🔄 重置</button>
+            <button class="btn btn-hint" id="btn-hint">💡 提示</button>
+        </div>
+    </div>
+    
+    <div class="grid"></div>
+
+<script>
+    document.addEventListener('DOMContentLoaded', () => {
+        const grid = document.querySelector('.grid');
+        const scoreDisplay = document.getElementById('score');
+        const btnReset = document.getElementById('btn-reset');
+        const btnHint = document.getElementById('btn-hint');
+        
+        const width = 8; 
+        const squares = [];
+        let score = 0;
+        let isProcessing = false; // 状态锁，防止动画中操作
+
+        const fruitColors = ['🍎', '🍌', '🍇', '🍓', '🍊', '🥥'];
+
+        // --- 初始化 ---
+        function createBoard() {
+            grid.innerHTML = '';
+            squares.length = 0; // 清空数组
+            for (let i = 0; i < width * width; i++) {
+                const square = document.createElement('div');
+                square.setAttribute('draggable', true);
+                square.setAttribute('id', i);
+                
+                // 初始生成时避免直接出现三连（可选，这里简化处理，允许开局消除）
+                let randomColor = Math.floor(Math.random() * fruitColors.length);
+                square.innerHTML = fruitColors[randomColor];
+                
+                grid.appendChild(square);
+                squares.push(square);
+                
+                // 绑定事件
+                bindEvents(square);
+            }
+        }
+
+        function bindEvents(square) {
+            // PC
+            square.addEventListener('dragstart', dragStart);
+            square.addEventListener('dragend', dragEnd);
+            square.addEventListener('dragover', e => e.preventDefault());
+            square.addEventListener('dragenter', e => e.preventDefault());
+            square.addEventListener('drop', dragDrop);
+            // Mobile
+            square.addEventListener('touchstart', touchStart);
+            square.addEventListener('touchmove', touchMove);
+            square.addEventListener('touchend', touchEnd);
+        }
+
+        createBoard();
+
+        // --- 交互逻辑变量 ---
+        let colorBeingDragged, colorBeingReplaced;
+        let squareIdBeingDragged, squareIdBeingReplaced;
+        let startTouchX, startTouchY;
+
+        // --- PC 拖拽 ---
+        function dragStart() {
+            if(isProcessing) return;
+            clearHint(); // 开始操作时清除提示
+            colorBeingDragged = this.innerHTML;
+            squareIdBeingDragged = parseInt(this.id);
+            this.classList.add('dragging');
+        }
+
+        function dragDrop() {
+            if(isProcessing) return;
+            colorBeingReplaced = this.innerHTML;
+            squareIdBeingReplaced = parseInt(this.id);
+            this.innerHTML = colorBeingDragged;
+            squares[squareIdBeingDragged].innerHTML = colorBeingReplaced;
+        }
+
+        function dragEnd() {
+            if(isProcessing) return;
+            this.classList.remove('dragging');
+            handleSwapLogic();
+        }
+
+        // --- 移动端触摸 ---
+        function touchStart(e) {
+            if(isProcessing) return;
+            e.preventDefault();
+            clearHint(); // 清除提示
+            startTouchX = e.touches[0].clientX;
+            startTouchY = e.touches[0].clientY;
+            colorBeingDragged = this.innerHTML;
+            squareIdBeingDragged = parseInt(this.id);
+            this.classList.add('dragging');
+            squareIdBeingReplaced = null;
+        }
+
+        function touchMove(e) {
+            if(isProcessing) return;
+            e.preventDefault();
+            if(!startTouchX || !squareIdBeingDragged && squareIdBeingDragged !== 0) return;
+
+            const endTouchX = e.touches[0].clientX;
+            const endTouchY = e.touches[0].clientY;
+            const diffX = endTouchX - startTouchX;
+            const diffY = endTouchY - startTouchY;
+            const threshold = 30; // 滑动灵敏度
+
+            if (Math.abs(diffX) > Math.abs(diffY) && Math.abs(diffX) > threshold) {
+                // 左右
+                squareIdBeingReplaced = diffX > 0 ? squareIdBeingDragged + 1 : squareIdBeingDragged - 1;
+            } else if (Math.abs(diffY) > Math.abs(diffX) && Math.abs(diffY) > threshold) {
+                // 上下
+                squareIdBeingReplaced = diffY > 0 ? squareIdBeingDragged + width : squareIdBeingDragged - width;
+            }
+
+            if (squareIdBeingReplaced !== null && squares[squareIdBeingReplaced]) {
+                // 视觉预览交换
+                colorBeingReplaced = squares[squareIdBeingReplaced].innerHTML;
+                squares[squareIdBeingReplaced].innerHTML = colorBeingDragged;
+                squares[squareIdBeingDragged].innerHTML = colorBeingReplaced;
+                
+                squares[squareIdBeingDragged].classList.remove('dragging');
+                handleSwapLogic();
+                // 重置防止连续触发
+                startTouchX = null; 
+                startTouchY = null;
+            }
+        }
+
+        function touchEnd() {
+            if (squareIdBeingDragged !== null && squares[squareIdBeingDragged]) {
+                squares[squareIdBeingDragged].classList.remove('dragging');
+            }
+            startTouchX = null;
+            startTouchY = null;
+        }
+
+        // --- 核心交换处理 ---
+        function handleSwapLogic() {
+            // 校验移动合法性
+            const validMoves = [
+                squareIdBeingDragged - 1, squareIdBeingDragged - width,
+                squareIdBeingDragged + 1, squareIdBeingDragged + width
+            ];
+            
+            const isValidIndex = (id) => id >= 0 && id < width * width;
+            let validMove = validMoves.includes(squareIdBeingReplaced) && isValidIndex(squareIdBeingReplaced);
+
+            // 跨行边界检查
+            if (squareIdBeingDragged % width === 0 && squareIdBeingReplaced === squareIdBeingDragged - 1) validMove = false;
+            if ((squareIdBeingDragged + 1) % width === 0 && squareIdBeingReplaced === squareIdBeingDragged + 1) validMove = false;
+
+            // 检查是否消除
+            const isMatch = checkRowForThree(false) || checkColumnForThree(false);
+
+            if (squareIdBeingReplaced && validMove && isMatch) {
+                // 成功消除：无需操作，等待主循环处理动画
+                squareIdBeingReplaced = null;
+            } else if (squareIdBeingReplaced && validMove) {
+                // 移动合法但无消除：换回去
+                squares[squareIdBeingReplaced].innerHTML = colorBeingReplaced;
+                squares[squareIdBeingDragged].innerHTML = colorBeingDragged;
+            } else if (squareIdBeingReplaced) {
+                // 移动非法：换回去
+                squares[squareIdBeingReplaced].innerHTML = colorBeingReplaced;
+                squares[squareIdBeingDragged].innerHTML = colorBeingDragged;
+            }
+        }
+
+        // --- 消除逻辑 (isRealCheck: true=执行消除加分, false=仅检测) ---
+        function checkRowForThree(isRealCheck = true) {
+            let matchFound = false;
+            for (let i = 0; i < 64; i++) {
+                // 排除每行最后两个
+                if ([6, 7, 14, 15, 22, 23, 30, 31, 38, 39, 46, 47, 54, 55, 62, 63].includes(i)) continue;
+                
+                let rowOfThree = [i, i + 1, i + 2];
+                let decidedColor = squares[i].innerHTML;
+                if (decidedColor === '') continue;
+
+                if (rowOfThree.every(index => squares[index].innerHTML === decidedColor)) {
+                    if (isRealCheck) {
+                        matchFound = true;
+                        score += 3;
+                        scoreDisplay.innerHTML = score;
+                        rowOfThree.forEach(index => {
+                            squares[index].classList.add('fade-out');
+                            // 动画结束后清理在主循环控制，这里只加类
+                        });
+                    } else {
+                        return true; // 仅检测
+                    }
+                }
+            }
+            return matchFound;
+        }
+
+        function checkColumnForThree(isRealCheck = true) {
+            let matchFound = false;
+            for (let i = 0; i < 48; i++) { // 64 - 16
+                let colOfThree = [i, i + width, i + width * 2];
+                let decidedColor = squares[i].innerHTML;
+                if (decidedColor === '') continue;
+
+                if (colOfThree.every(index => squares[index].innerHTML === decidedColor)) {
+                    if (isRealCheck) {
+                        matchFound = true;
+                        score += 3;
+                        scoreDisplay.innerHTML = score;
+                        colOfThree.forEach(index => {
+                            squares[index].classList.add('fade-out');
+                        });
+                    } else {
+                        return true;
+                    }
+                }
+            }
+            return matchFound;
+        }
+
+        // --- 掉落与填充 ---
+        function moveDown() {
+            // 从倒数第二行往上检查
+            for (let i = 55; i >= 0; i--) {
+                if (squares[i + width].innerHTML === '') {
+                    squares[i + width].innerHTML = squares[i].innerHTML;
+                    squares[i].innerHTML = '';
+                    // 如果正在掉落，移除该格子的可能残留动画类
+                    squares[i+width].classList.remove('fade-out'); 
+                }
+            }
+            // 顶层生成
+            for (let i = 0; i < width; i++) {
+                if (squares[i].innerHTML === '') {
+                    let randomColor = Math.floor(Math.random() * fruitColors.length);
+                    squares[i].innerHTML = fruitColors[randomColor];
+                    squares[i].classList.remove('fade-out');
+                }
+            }
+        }
+
+        // --- 清理动画状态 ---
+        function clearFinishedAnimations() {
+            const fadingSquares = document.querySelectorAll('.fade-out');
+            // 实际上我们只需要在动画结束后清空 innerHTML
+            // 但由于 moveDown 在不断运行，我们在这里做一个辅助清理
+            fadingSquares.forEach(sq => {
+                // 如果 CSS 动画已经跑完了(我们可以通过检查 opacity, 但简单点用时间判断)
+                // 这里我们利用 JS 循环频率：如果它被标记消除，就变空
+                if (sq.style.opacity === '0') { // 这种判断不可靠
+                    sq.innerHTML = '';
+                    sq.classList.remove('fade-out');
+                }
+            });
+            
+            // 更好的方式：监听 animationend，但如果批量操作，容易漏
+            // 我们改为简单暴力法：在 checkRow/Col 里面添加了 fade-out
+            // 我们使用 setTimeout 在 300ms 后清空内容
+            // (这部分逻辑稍微调整一下，为了防止闪烁，我们在 check 里已经做了 class add)
+        }
+        
+        // 修正消除的后续处理
+        // 由于 setInterval 很快，我们需要一个标志位
+        function processMatches() {
+            const matches = document.querySelectorAll('.fade-out');
+            if (matches.length > 0) {
+                isProcessing = true;
+                setTimeout(() => {
+                    matches.forEach(sq => {
+                        sq.innerHTML = '';
+                        sq.classList.remove('fade-out');
+                    });
+                    isProcessing = false;
+                }, 300); // 对应 CSS 0.3s 动画
+            }
+        }
+
+        // --- 功能按钮逻辑 ---
+
+        // 1. 重置游戏 (分数不变)
+        btnReset.addEventListener('click', () => {
+            clearHint();
+            // 简单的洗牌动画
+            squares.forEach(sq => {
+                sq.innerHTML = '';
+                sq.classList.add('fade-out');
+            });
+            
+            setTimeout(() => {
+                squares.forEach(sq => sq.classList.remove('fade-out'));
+                createBoard(); // 重新生成
+            }, 300);
+        });
+
+        // 2. 提示功能
+        function clearHint() {
+            squares.forEach(sq => sq.classList.remove('hint-anim'));
+        }
+
+        // 辅助：虚拟检查交换后是否有效
+        function isValidSwap(idx1, idx2) {
+            // 备份颜色
+            const c1 = squares[idx1].innerHTML;
+            const c2 = squares[idx2].innerHTML;
+            if(!c1 || !c2) return false;
+
+            // 交换
+            squares[idx1].innerHTML = c2;
+            squares[idx2].innerHTML = c1;
+
+            // 检查是否匹配 (复用 check 函数的逻辑，但不加分)
+            // 这里不能直接调全局 checkRowForThree(false)，因为它检查全盘，效率低且可能误判其他位置
+            // 我们写个简单的局部检查
+            let match = false;
+            if (checkLocalMatch(idx1) || checkLocalMatch(idx2)) match = true;
+
+            // 还原
+            squares[idx1].innerHTML = c1;
+            squares[idx2].innerHTML = c2;
+
+            return match;
+        }
+
+        function checkLocalMatch(idx) {
+            // 简单检查该点横纵
+            const r = Math.floor(idx/width);
+            const c = idx % width;
+            const color = squares[idx].innerHTML;
+
+            // 横向
+            let h = 1; 
+            if(c>0 && squares[idx-1].innerHTML === color) { h++; if(c>1 && squares[idx-2].innerHTML===color) h++; }
+            if(c<width-1 && squares[idx+1].innerHTML === color) { h++; if(c<width-2 && squares[idx+2].innerHTML===color) h++; }
+            // 需要稍微精细点的逻辑，这里简化：只要横向或纵向能连3个
+            // 重新全盘扫描一次其实对于 8x8 很快，为了准确，我们直接用全盘扫描(非破坏性)
+            return checkRowForThree(false) || checkColumnForThree(false);
+        }
+
+        btnHint.addEventListener('click', () => {
+            clearHint();
+            if(isProcessing) return;
+
+            // 寻找一个可行的交换
+            let found = false;
+            for(let i=0; i<width*width; i++) {
+                // 尝试右交换
+                if((i+1)%width !== 0) {
+                    if(isValidSwap(i, i+1)) {
+                        squares[i].classList.add('hint-anim');
+                        squares[i+1].classList.add('hint-anim');
+                        found = true;
+                        break;
+                    }
+                }
+                // 尝试下交换
+                if(i+width < width*width) {
+                    if(isValidSwap(i, i+width)) {
+                        squares[i].classList.add('hint-anim');
+                        squares[i+width].classList.add('hint-anim');
+                        found = true;
+                        break;
+                    }
+                }
+            }
+            
+            if(!found) {
+                alert('当前没有可消除的组合，请点击重置！');
+            } else {
+                // 3秒后自动取消提示
+                setTimeout(clearHint, 3000);
+            }
+        });
+
+
+        // --- 游戏主循环 ---
+        window.setInterval(() => {
+            // 如果有正在消失的，不进行物理掉落
+            const isAnimating = document.querySelectorAll('.fade-out').length > 0;
+            
+            if (!isAnimating) {
+                moveDown();
+                
+                // 只有在静止时才进行真实的消除检查
+                const m1 = checkRowForThree(true);
+                const m2 = checkColumnForThree(true);
+                
+                if (m1 || m2) {
+                    processMatches();
+                }
+            }
+        }, 100);
+    });
+</script>
+</body>
+</html>
