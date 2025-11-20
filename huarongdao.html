@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>纯前端华容道</title>
+    <style>
+        /* --- CSS 样式部分 --- */
+        body {
+            font-family: 'SimHei', 'Arial', sans-serif;
+            background: #f4f4f4;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            margin: 0;
+        }
+
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+        }
+
+        .info {
+            font-size: 1.2rem;
+            margin-bottom: 20px;
+            color: #666;
+            display: flex;
+            gap: 20px;
+        }
+
+        .info button {
+            padding: 5px 15px;
+            font-size: 1rem;
+            border: none;
+            background: #5B92E5;
+            color: white;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .info button:hover {
+            background: #4a7fd3;
+        }
+
+        /* 棋盘容器 */
+        .board-container {
+            position: relative;
+            background: #8B4513;
+            /* 土棕色 */
+            padding: 10px;
+            border: 10px solid #4a280e;
+            border-radius: 10px;
+        }
+
+        /* CSS Grid 布局：4列 x 5行 */
+        .board {
+            display: grid;
+            grid-template-columns: repeat(4, 80px);
+            /* 4 列，每列 80px */
+            grid-template-rows: repeat(5, 80px);
+            /* 5 行，每行 80px */
+            gap: 5px;
+            /* 棋子之间的间隙 */
+            position: relative;
+        }
+
+        /* 棋子基础样式 */
+        .piece {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 5px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+            font-size: 1rem;
+            font-weight: bold;
+            color: white;
+            cursor: pointer;
+            transition: all 0.15s ease-out;
+            /* 移动动画 */
+            position: absolute;
+            /* 使 pieces 可以脱离 flow 使用 top/left/width/height */
+        }
+
+        /* 曹操 (2x2) */
+        .boss {
+            background-color: #B30000;
+            z-index: 5;
+        }
+
+        /* 关羽 (2x1 横) */
+        .horizontal {
+            background-color: #FF7373;
+        }
+
+        /* 张飞等 (1x2 竖) */
+        .vertical {
+            background-color: #5B92E5;
+        }
+
+        /* 小兵 (1x1) */
+        .soldier {
+            background-color: #97CC70;
+        }
+
+        /* 获胜提示 */
+        .win-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            font-size: 2.5rem;
+            border-radius: 10px;
+            z-index: 10;
+        }
+
+        .win-overlay.active {
+            display: flex;
+        }
+
+        /* 底部出口 */
+        .exit-marker {
+            position: absolute;
+            bottom: -5px;
+            /* 调整到板子底部 */
+            left: 50%;
+            transform: translateX(-50%);
+            width: 165px;
+            /* 2列 + 1间隙 */
+            height: 10px;
+            background: #3c2415;
+            z-index: 0;
+            border-radius: 0 0 5px 5px;
+        }
+
+        /* 媒体查询：小屏幕适配 */
+        @media (max-width: 400px) {
+            .board {
+                grid-template-columns: repeat(4, 60px);
+                grid-template-rows: repeat(5, 60px);
+                gap: 4px;
+            }
+
+            .info {
+                font-size: 1rem;
+            }
+
+            .piece {
+                font-size: 0.8rem;
+            }
+
+            .exit-marker {
+                width: 124px;
+            }
+        }
+    </style>
+</head>
+
+<body>
+
+    <h1>🏮 华容道 🏮</h1>
+
+    <div class="info">
+        <div id="move-counter">步数: 0</div>
+        <button onclick="resetGame()">重置</button>
+    </div>
+
+    <div class="board-container">
+        <div class="board" id="game-board">
+        </div>
+        <div class="exit-marker"></div>
+
+        <div class="win-overlay" id="win-message">
+            🎉 成功逃脱！ 🎉
+            <button onclick="resetGame()" style="margin-top: 20px; font-size: 1.2rem;">再来一局</button>
+        </div>
+    </div>
+
+    <script>
+        const GRID_SIZE = 80;
+        const GAP = 5;
+        const ROWS = 5;
+        const COLS = 4;
+
+        const boardElement = document.getElementById('game-board');
+        const moveCounter = document.getElementById('move-counter');
+        const winMessage = document.getElementById('win-message');
+
+        let moves = 0;
+
+        const initialPiecesConfig = [
+            { id: 'CC', w: 2, h: 2, r: 0, c: 1, name: '曹操', class: 'boss' },
+            { id: 'ZF', w: 1, h: 2, r: 0, c: 0, name: '张飞', class: 'vertical' },
+            { id: 'ZY', w: 1, h: 2, r: 0, c: 3, name: '赵云', class: 'vertical' },
+            { id: 'GY', w: 2, h: 1, r: 2, c: 1, name: '关羽', class: 'horizontal' },
+            { id: 'MC', w: 1, h: 2, r: 2, c: 0, name: '马超', class: 'vertical' },
+            { id: 'HZ', w: 1, h: 2, r: 2, c: 3, name: '黄忠', class: 'vertical' },
+            { id: 'S1', w: 1, h: 1, r: 3, c: 1, name: '卒1', class: 'soldier' },
+            { id: 'S2', w: 1, h: 1, r: 3, c: 2, name: '卒2', class: 'soldier' },
+        ];
+
+        let pieces = [];
+        let boardState = [];
+
+        // --- 拖拽相关状态 ---
+        let activePiece = null;
+        let dragStartX = 0;
+        let dragStartY = 0;
+
+        // --- 1. 游戏初始化和重置 ---
+        function resetGame() {
+            pieces = initialPiecesConfig.map(p => ({ ...p }));
+            moves = 0;
+            moveCounter.textContent = `步数: ${moves}`;
+            winMessage.classList.remove('active');
+            boardElement.innerHTML = '';
+            activePiece = null; // 重置拖拽状态
+
+            createPiecesElements();
+            updateBoardState();
+            renderBoard();
+        }
+
+        function createPiecesElements() {
+            pieces.forEach(piece => {
+                let div = document.createElement('div');
+                div.className = `piece ${piece.class}`;
+                div.id = `piece-${piece.id}`;
+                div.textContent = piece.name;
+                div.pieceId = piece.id;
+
+                // 绑定拖拽开始事件 (替代原来的 click)
+                div.addEventListener('mousedown', handleMouseDown);
+                // 兼容移动端触摸事件
+                div.addEventListener('touchstart', handleTouchStart, { passive: false });
+
+                boardElement.appendChild(div);
+            });
+        }
+
+        // --- 2. 状态管理 ---
+
+        function updateBoardState() {
+            boardState = Array(ROWS).fill(0).map(() => Array(COLS).fill(0));
+            pieces.forEach(p => {
+                for (let r = p.r; r < p.r + p.h; r++) {
+                    for (let c = p.c; c < p.c + p.w; c++) {
+                        if (r < ROWS && c < COLS) {
+                            boardState[r][c] = p.id;
+                        }
+                    }
+                }
+            });
+        }
+
+        function renderBoard() {
+            pieces.forEach(p => {
+                const el = document.getElementById(`piece-${p.id}`);
+                if (el) {
+                    // 像素计算
+                    const totalWidth = p.w * GRID_SIZE + (p.w - 1) * GAP;
+                    const totalHeight = p.h * GRID_SIZE + (p.h - 1) * GAP;
+                    const totalLeft = p.c * GRID_SIZE + p.c * GAP;
+                    const totalTop = p.r * GRID_SIZE + p.r * GAP;
+
+                    el.style.width = `${totalWidth}px`;
+                    el.style.height = `${totalHeight}px`;
+                    el.style.left = `${totalLeft}px`;
+                    el.style.top = `${totalTop}px`;
+                }
+            });
+        }
+
+        // --- 3. 移动逻辑 (复用) ---
+        function isAreaEmpty(pieceId, newR, newC, w, h) {
+            if (newR < 0 || newC < 0 || newR + h > ROWS || newC + w > COLS) {
+                return false;
+            }
+            for (let r = newR; r < newR + h; r++) {
+                for (let c = newC; c < newC + w; c++) {
+                    const cellContent = boardState[r][c];
+                    if (cellContent !== 0 && cellContent !== pieceId) {
+                        return false;
+                    }
+                }
+            }
+            return true;
+        }
+
+        // --- 4. 拖拽处理 ---
+
+        // PC 端
+        function handleMouseDown(e) {
+            if (winMessage.classList.contains('active')) return;
+
+            const pieceEl = e.currentTarget;
+            const pieceId = pieceEl.pieceId;
+
+            activePiece = pieces.find(p => p.id === pieceId);
+            if (!activePiece) return;
+
+            // 记录鼠标起始点
+            dragStartX = e.clientX;
+            dragStartY = e.clientY;
+
+            // 绑定全局事件
+            document.addEventListener('mousemove', handleMouseMove);
+            document.addEventListener('mouseup', handleMouseUp);
+
+            // 视觉反馈
+            pieceEl.style.zIndex = 100;
+            pieceEl.style.cursor = 'grabbing';
+        }
+
+        function handleMouseMove(e) {
+            if (!activePiece) return;
+            const pieceEl = document.getElementById(`piece-${activePiece.id}`);
+            if (!pieceEl) return;
+
+            // 实时跟随鼠标，但只允许沿一个轴移动
+            const dx = e.clientX - dragStartX;
+            const dy = e.clientY - dragStartY;
+
+            // 获取棋子当前的 CSS 坐标
+            const currentLeft = activePiece.c * GRID_SIZE + activePiece.c * GAP;
+            const currentTop = activePiece.r * GRID_SIZE + activePiece.r * GAP;
+
+            if (activePiece.w > 1 && activePiece.h > 1) {
+                // 曹操 (2x2) 可以横竖都走，看拖拽轴
+                if (Math.abs(dx) > Math.abs(dy)) {
+                    // 水平拖拽
+                    pieceEl.style.left = `${currentLeft + dx}px`;
+                    pieceEl.style.top = `${currentTop}px`;
+                } else {
+                    // 垂直拖拽
+                    pieceEl.style.left = `${currentLeft}px`;
+                    pieceEl.style.top = `${currentTop + dy}px`;
+                }
+            } else if (activePiece.w > 1) {
+                // 关羽 (横向 2x1) 只能水平拖拽
+                pieceEl.style.left = `${currentLeft + dx}px`;
+                pieceEl.style.top = `${currentTop}px`;
+            } else if (activePiece.h > 1) {
+                // 张飞等 (垂直 1x2) 只能垂直拖拽
+                pieceEl.style.left = `${currentLeft}px`;
+                pieceEl.style.top = `${currentTop + dy}px`;
+            } else {
+                // 卒 (1x1) 看拖拽轴
+                if (Math.abs(dx) > Math.abs(dy)) {
+                    pieceEl.style.left = `${currentLeft + dx}px`;
+                    pieceEl.style.top = `${currentTop}px`;
+                } else {
+                    pieceEl.style.left = `${currentLeft}px`;
+                    pieceEl.style.top = `${currentTop + dy}px`;
+                }
+            }
+        }
+
+        function handleMouseUp(e) {
+            if (!activePiece) return;
+
+            // 解绑全局事件
+            document.removeEventListener('mousemove', handleMouseMove);
+            document.removeEventListener('mouseup', handleMouseUp);
+
+            const pieceEl = document.getElementById(`piece-${activePiece.id}`);
+            pieceEl.style.zIndex = '';
+            pieceEl.style.cursor = 'pointer';
+
+            const dx = e.clientX - dragStartX;
+            const dy = e.clientY - dragStartY;
+
+            // 确定移动方向和步数
+            let steps = 0;
+            let dr = 0;
+            let dc = 0;
+            const threshold = (GRID_SIZE + GAP) / 2; // 移动超过半个格子算作一步
+
+            if (Math.abs(dx) > Math.abs(dy)) {
+                // 水平移动
+                steps = Math.round(dx / (GRID_SIZE + GAP));
+                dc = steps;
+            } else {
+                // 垂直移动
+                steps = Math.round(dy / (GRID_SIZE + GAP));
+                dr = steps;
+            }
+
+            if (steps !== 0) {
+                // 计算目标位置
+                const newR = activePiece.r + dr;
+                const newC = activePiece.c + dc;
+
+                // 检查目标位置是否可行（需要检查所有步长是否可行，这里简化：只检查最终目标）
+                if (isAreaEmpty(activePiece.id, newR, newC, activePiece.w, activePiece.h)) {
+                    // 执行移动
+                    activePiece.r = newR;
+                    activePiece.c = newC;
+                    moves++;
+                    moveCounter.textContent = `步数: ${moves}`;
+                    updateBoardState();
+                    checkWinCondition();
+                }
+            }
+
+            // 无论是否移动成功，都重新渲染，让棋子回到正确的网格位置 (或新位置)
+            renderBoard();
+            activePiece = null;
+        }
+
+        // 移动端兼容
+        function getTouchCoords(e) {
+            const touch = e.touches[0] || e.changedTouches[0];
+            return { clientX: touch.clientX, clientY: touch.clientY };
+        }
+
+        function handleTouchStart(e) {
+            e.preventDefault(); // 阻止滚动
+            const coords = getTouchCoords(e);
+            // 模拟 mousedown
+            handleMouseDown({
+                clientX: coords.clientX,
+                clientY: coords.clientY,
+                currentTarget: e.currentTarget
+            });
+            document.addEventListener('touchmove', handleTouchMove, { passive: false });
+            document.addEventListener('touchend', handleTouchEnd);
+        }
+
+        function handleTouchMove(e) {
+            e.preventDefault(); // 阻止滚动
+            const coords = getTouchCoords(e);
+            // 模拟 mousemove
+            handleMouseMove({ clientX: coords.clientX, clientY: coords.clientY });
+        }
+
+        function handleTouchEnd(e) {
+            const coords = getTouchCoords(e);
+            // 模拟 mouseup
+            handleMouseUp({ clientX: coords.clientX, clientY: coords.clientY });
+            document.removeEventListener('touchmove', handleTouchMove);
+            document.removeEventListener('touchend', handleTouchEnd);
+        }
+
+        // --- 4. 胜利条件 (不变) ---
+        function checkWinCondition() {
+            const caoCao = pieces.find(p => p.id === 'CC');
+            if (caoCao && caoCao.r === 3 && caoCao.c === 1) {
+                winMessage.classList.add('active');
+            }
+        }
+
+        // 页面加载完成后，启动游戏
+        resetGame();
+    </script>
+</body>
+
+</html>
