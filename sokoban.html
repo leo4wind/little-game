@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>XSB 推箱子 - 选关版</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #2c3e50;
+            color: white;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+        }
+        h1 { margin-bottom: 10px; }
+        .controls {
+            margin-bottom: 20px;
+            font-size: 0.9em;
+            color: #bdc3c7;
+        }
+        canvas {
+            background-color: #34495e;
+            border: 4px solid #95a5a6;
+            box-shadow: 0 0 20px rgba(0,0,0,0.5);
+        }
+        .status {
+            margin-top: 15px;
+            font-size: 1.2em;
+            font-weight: bold;
+            display: flex;
+            gap: 20px;
+            align-items: center;
+        }
+        .btn-group {
+            margin-top: 15px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        /* 通用按钮样式 */
+        button {
+            padding: 8px 16px;
+            font-size: 1em;
+            cursor: pointer;
+            background-color: #e67e22;
+            border: none;
+            color: white;
+            border-radius: 4px;
+            transition: background 0.2s;
+        }
+        button:hover { background-color: #d35400; }
+        button:disabled { background-color: #7f8c8d; cursor: not-allowed; }
+        
+        .btn-undo { background-color: #8e44ad; }
+        .btn-undo:hover { background-color: #732d91; }
+
+        /* 下拉菜单样式 */
+        select {
+            padding: 8px;
+            font-size: 1em;
+            border-radius: 4px;
+            border: none;
+            background-color: #ecf0f1;
+            color: #2c3e50;
+            font-weight: bold;
+            cursor: pointer;
+        }
+        select:focus {
+            outline: 2px solid #3498db;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>推箱子 (Sokoban)</h1>
+    <div class="controls">
+        移动: 方向键 (↑ ↓ ← →) | 撤销: Z | 重置: R
+    </div>
+    
+    <canvas id="gameCanvas" width="400" height="400"></canvas>
+    
+    <div class="status">
+        <span id="stepText">步数: 0</span>
+    </div>
+    
+    <div class="btn-group">
+        <select id="levelSelect" onchange="game.changeLevelFromSelect(this)"></select>
+
+        <button onclick="game.resetLevel()">重置 (R)</button>
+        <button class="btn-undo" onclick="game.undo()" id="btnUndo">撤销 (Z)</button>
+    </div>
+    
+    <div class="btn-group">
+        <button onclick="game.prevLevel()" id="btnPrev">上一关</button>
+        <button onclick="game.nextLevel()" id="btnNext">下一关</button>
+    </div>
+
+<script>
+// 关卡数据仓库
+const levelsData = [
+        // 关卡 1 (您提供的数据)
+        `
+__####___
+###--####
+#-----$-#
+#-#--#$-#
+#-.-.#@-#
+#########
+    `,
+`_#######
+_#-----#
+_#-.$.-#
+##-$@$-#
+#--.$.-#
+#------#
+########`,
+      ];
+
+class SokobanGame {
+    constructor(canvasId) {
+        this.canvas = document.getElementById(canvasId);
+        this.ctx = this.canvas.getContext('2d');
+        this.tileSize = 40;
+        this.currentLevelIndex = 0;
+        
+        this.map = [];      
+        this.goals = [];    
+        this.player = {x: 0, y: 0};
+        this.history = [];
+        this.stepCount = 0;
+        this.isWon = false;
+
+        this.colors = {
+            wall: '#7f8c8d', floor: '#34495e', goal: '#c0392b',
+            box: '#f1c40f', boxOnGoal: '#2ecc71',
+            player: '#3498db', playerOnGoal: '#3498db'
+        };
+
+        this.initLevelSelect(); // 初始化下拉菜单
+        this.initInput();
+        this.loadLevel(this.currentLevelIndex);
+    }
+
+    // 初始化下拉菜单
+    initLevelSelect() {
+        const select = document.getElementById('levelSelect');
+        select.innerHTML = ''; // 清空
+        levelsData.forEach((_, index) => {
+            const option = document.createElement('option');
+            option.value = index;
+            option.text = `关卡 ${index + 1}`;
+            select.appendChild(option);
+        });
+    }
+
+    // 解析 XSB
+    parseLevel(levelString) {
+        const lines = levelString.trim().split('\n');
+        this.map = [];
+        this.goals = [];
+        let width = 0;
+        lines.forEach(line => { if(line.length > width) width = line.length; });
+
+        for (let y = 0; y < lines.length; y++) {
+            let row = [];
+            let line = lines[y]; 
+            for (let x = 0; x < line.length; x++) {
+                let char = line[x];
+                if (char === '_' || char === '-') char = ' ';
+                if (char === '.' || char === '+' || char === '*') {
+                    this.goals.push({x: x, y: y});
+                }
+                if (char === '@' || char === '+') {
+                    this.player = {x: x, y: y};
+                }
+                row.push(char);
+            }
+            while (row.length < width) row.push(' ');
+            this.map.push(row);
+        }
+    }
+
+    loadLevel(index) {
+        if (index < 0 || index >= levelsData.length) return;
+        this.currentLevelIndex = index;
+        this.isWon = false;
+        this.history = []; 
+        this.stepCount = 0;
+        
+        this.parseLevel(levelsData[index]);
+        this.resizeCanvas();
+        this.draw();
+        this.updateUI();
+    }
+
+    resizeCanvas() {
+        if (this.map.length === 0) return;
+        this.canvas.width = this.map[0].length * this.tileSize;
+        this.canvas.height = this.map.length * this.tileSize;
+    }
+
+    saveState() {
+        const state = {
+            map: JSON.parse(JSON.stringify(this.map)),
+            player: {...this.player},
+            stepCount: this.stepCount
+        };
+        this.history.push(state);
+        if(this.history.length > 500) this.history.shift();
+    }
+
+    undo() {
+        if (this.history.length === 0 || this.isWon) return;
+        const lastState = this.history.pop();
+        this.map = lastState.map;
+        this.player = lastState.player;
+        this.stepCount = lastState.stepCount;
+        this.draw();
+        this.updateUI();
+    }
+
+    move(dx, dy) {
+        if (this.isWon) return;
+
+        const nextX = this.player.x + dx;
+        const nextY = this.player.y + dy;
+        const nextChar = this.map[nextY][nextX];
+
+        if (nextChar === '#') return;
+
+        let moved = false;
+        if (nextChar === ' ' || nextChar === '.') {
+            this.saveState();
+            this.updateChar(this.player.x, this.player.y, false);
+            this.player.x = nextX;
+            this.player.y = nextY;
+            this.updateChar(nextX, nextY, true);
+            moved = true;
+        }
+        else if (nextChar === '$' || nextChar === '*') {
+            const afterBoxX = nextX + dx;
+            const afterBoxY = nextY + dy;
+            const afterBoxChar = this.map[afterBoxY][afterBoxX];
+
+            if (afterBoxChar !== '#' && afterBoxChar !== '$' && afterBoxChar !== '*') {
+                this.saveState();
+                this.updateChar(nextX, nextY, false); 
+                const isAfterGoal = this.isGoal(afterBoxX, afterBoxY);
+                this.map[afterBoxY][afterBoxX] = isAfterGoal ? '*' : '$';
+
+                this.updateChar(this.player.x, this.player.y, false);
+                this.player.x = nextX;
+                this.player.y = nextY;
+                const isNextGoal = this.isGoal(nextX, nextY);
+                this.map[nextY][nextX] = isNextGoal ? '+' : '@';
+                
+                moved = true;
+            }
+        }
+
+        if (moved) {
+            this.stepCount++;
+            this.draw();
+            this.updateUI();
+            this.checkWin();
+        }
+    }
+
+    updateChar(x, y, isPlayerEntering) {
+        const isGoal = this.isGoal(x, y);
+        if (isPlayerEntering) {
+            this.map[y][x] = isGoal ? '+' : '@';
+        } else {
+            this.map[y][x] = isGoal ? '.' : ' ';
+        }
+    }
+
+    isGoal(x, y) {
+        return this.goals.some(g => g.x === x && g.y === y);
+    }
+
+    checkWin() {
+        let hasUnfinishedBox = false;
+        for (let row of this.map) {
+            for (let char of row) {
+                if (char === '$') {
+                    hasUnfinishedBox = true;
+                    break;
+                }
+            }
+        }
+        if (!hasUnfinishedBox) {
+            this.isWon = true;
+            this.draw();
+            
+            this.ctx.fillStyle = "rgba(0, 0, 0, 0.7)";
+            this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+            this.ctx.fillStyle = "#2ecc71";
+            this.ctx.font = "40px Arial";
+            this.ctx.textAlign = "center";
+            this.ctx.fillText("恭喜过关!", this.canvas.width / 2, this.canvas.height / 2 - 20);
+            this.ctx.font = "20px Arial";
+            this.ctx.fillStyle = "#fff";
+            this.ctx.fillText("点击下一关继续", this.canvas.width / 2, this.canvas.height / 2 + 20);
+        }
+    }
+
+    draw() {
+        this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+        for (let y = 0; y < this.map.length; y++) {
+            for (let x = 0; x < this.map[0].length; x++) {
+                const char = this.map[y][x];
+                const px = x * this.tileSize;
+                const py = y * this.tileSize;
+
+                if (char === '#') {
+                    this.ctx.fillStyle = this.colors.wall;
+                    this.ctx.fillRect(px, py, this.tileSize, this.tileSize);
+                    this.ctx.strokeStyle = '#555';
+                    this.ctx.strokeRect(px, py, this.tileSize, this.tileSize);
+                } else {
+                    this.ctx.fillStyle = this.colors.floor;
+                    this.ctx.fillRect(px, py, this.tileSize, this.tileSize);
+                }
+
+                if (this.isGoal(x, y) && char !== '$' && char !== '*' && char !== '@' && char !== '+') {
+                    this.drawCircle(px, py, this.colors.goal, 0.2);
+                }
+
+                if (char === '$') this.drawBox(px, py, this.colors.box);
+                else if (char === '*') this.drawBox(px, py, this.colors.boxOnGoal);
+                else if (char === '@') this.drawPlayer(px, py, this.colors.player);
+                else if (char === '+') {
+                    this.drawCircle(px, py, this.colors.goal, 0.2);
+                    this.drawPlayer(px, py, this.colors.playerOnGoal);
+                }
+            }
+        }
+    }
+
+    drawBox(x, y, color) {
+        const p = 4;
+        this.ctx.fillStyle = color;
+        this.ctx.fillRect(x+p, y+p, this.tileSize-p*2, this.tileSize-p*2);
+        this.ctx.strokeStyle = "black";
+        this.ctx.lineWidth = 2;
+        this.ctx.strokeRect(x+p, y+p, this.tileSize-p*2, this.tileSize-p*2);
+        this.ctx.beginPath();
+        this.ctx.moveTo(x+p, y+p); this.ctx.lineTo(x+this.tileSize-p, y+this.tileSize-p);
+        this.ctx.moveTo(x+this.tileSize-p, y+p); this.ctx.lineTo(x+p, y+this.tileSize-p);
+        this.ctx.strokeStyle = "rgba(0,0,0,0.3)";
+        this.ctx.stroke();
+    }
+
+    drawPlayer(x, y, color) {
+        this.drawCircle(x, y, color, 0.35);
+        this.ctx.fillStyle = "white";
+        this.ctx.beginPath();
+        this.ctx.arc(x+this.tileSize*0.35, y+this.tileSize*0.4, 3, 0, Math.PI*2);
+        this.ctx.arc(x+this.tileSize*0.65, y+this.tileSize*0.4, 3, 0, Math.PI*2);
+        this.ctx.fill();
+    }
+
+    drawCircle(x, y, color, scale) {
+        const r = this.tileSize * scale;
+        this.ctx.fillStyle = color;
+        this.ctx.beginPath();
+        this.ctx.arc(x+this.tileSize/2, y+this.tileSize/2, r, 0, Math.PI*2);
+        this.ctx.fill();
+    }
+
+    // 下拉菜单事件处理
+    changeLevelFromSelect(selectElement) {
+        this.loadLevel(parseInt(selectElement.value));
+        selectElement.blur(); // 移除焦点，确保键盘能继续控制游戏
+    }
+
+    resetLevel() {
+        this.loadLevel(this.currentLevelIndex);
+    }
+    
+    nextLevel() {
+        if (this.currentLevelIndex < levelsData.length - 1) {
+            this.loadLevel(this.currentLevelIndex + 1);
+        }
+    }
+    
+    prevLevel() {
+        if (this.currentLevelIndex > 0) {
+            this.loadLevel(this.currentLevelIndex - 1);
+        }
+    }
+
+    updateUI() {
+        document.getElementById('stepText').innerText = `步数: ${this.stepCount}`;
+        document.getElementById('btnPrev').disabled = this.currentLevelIndex === 0;
+        document.getElementById('btnNext').disabled = this.currentLevelIndex === levelsData.length - 1;
+        document.getElementById('btnUndo').disabled = this.history.length === 0;
+        
+        // 同步下拉菜单的值
+        document.getElementById('levelSelect').value = this.currentLevelIndex;
+    }
+
+    initInput() {
+        document.addEventListener('keydown', (e) => {
+            if(["ArrowUp","ArrowDown","ArrowLeft","ArrowRight"].indexOf(e.code) > -1) e.preventDefault();
+            
+            switch(e.key) {
+                case 'ArrowUp': this.move(0, -1); break;
+                case 'ArrowDown': this.move(0, 1); break;
+                case 'ArrowLeft': this.move(-1, 0); break;
+                case 'ArrowRight': this.move(1, 0); break;
+                case 'r': case 'R': this.resetLevel(); break;
+                case 'z': case 'Z': this.undo(); break;
+            }
+        });
+    }
+}
+
+const game = new SokobanGame('gameCanvas');
+</script>
+</body>
+</html>
