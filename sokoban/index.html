@@ -88,6 +88,11 @@
     </div>
     
     <div class="btn-group">
+        <label style="color:#bdc3c7;">关卡文件：</label>
+        <select id="fileSelect"></select>
+    </div>
+
+    <div class="btn-group">
         <select id="levelSelect" onchange="game.changeLevelFromSelect(this)"></select>
 
         <button onclick="game.resetLevel()">重置 (R)</button>
@@ -100,25 +105,11 @@
     </div>
 
 <script>
-// 关卡数据仓库
-const levelsData = [
-        // 关卡 1 (您提供的数据)
-        `
-__####___
-###--####
-#-----$-#
-#-#--#$-#
-#-.-.#@-#
-#########
-    `,
-`_#######
-_#-----#
-_#-.$.-#
-##-$@$-#
-#--.$.-#
-#------#
-########`,
-      ];
+// 可选关卡文件
+const levelFileOptions = [
+    { label: 'DavidWSkinner.txt', value: 'DavidWSkinner.txt' },
+    { label: 'm2.txt', value: 'm2.txt' }
+];
 
 class SokobanGame {
     constructor(canvasId) {
@@ -133,6 +124,7 @@ class SokobanGame {
         this.history = [];
         this.stepCount = 0;
         this.isWon = false;
+        this.levels = [];
 
         this.colors = {
             wall: '#7f8c8d', floor: '#34495e', goal: '#c0392b',
@@ -142,14 +134,35 @@ class SokobanGame {
 
         this.initLevelSelect(); // 初始化下拉菜单
         this.initInput();
-        this.loadLevel(this.currentLevelIndex);
+    }
+
+    setLevels(levels) {
+        this.levels = levels;
+        this.currentLevelIndex = 0;
+        this.initLevelSelect();
+        if (this.levels.length > 0) {
+            this.loadLevel(0);
+        } else {
+            this.clearCanvas();
+            this.updateUI();
+        }
     }
 
     // 初始化下拉菜单
     initLevelSelect() {
         const select = document.getElementById('levelSelect');
         select.innerHTML = ''; // 清空
-        levelsData.forEach((_, index) => {
+        if (!this.levels || this.levels.length === 0) {
+            const option = document.createElement('option');
+            option.value = '';
+            option.text = '暂无关卡';
+            select.appendChild(option);
+            select.disabled = true;
+            return;
+        }
+
+        select.disabled = false;
+        this.levels.forEach((_, index) => {
             const option = document.createElement('option');
             option.value = index;
             option.text = `关卡 ${index + 1}`;
@@ -185,13 +198,13 @@ class SokobanGame {
     }
 
     loadLevel(index) {
-        if (index < 0 || index >= levelsData.length) return;
+        if (!this.levels || index < 0 || index >= this.levels.length) return;
         this.currentLevelIndex = index;
         this.isWon = false;
         this.history = []; 
         this.stepCount = 0;
         
-        this.parseLevel(levelsData[index]);
+        this.parseLevel(this.levels[index]);
         this.resizeCanvas();
         this.draw();
         this.updateUI();
@@ -201,6 +214,10 @@ class SokobanGame {
         if (this.map.length === 0) return;
         this.canvas.width = this.map[0].length * this.tileSize;
         this.canvas.height = this.map.length * this.tileSize;
+    }
+
+    clearCanvas() {
+        this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
     }
 
     saveState() {
@@ -375,7 +392,11 @@ class SokobanGame {
 
     // 下拉菜单事件处理
     changeLevelFromSelect(selectElement) {
-        this.loadLevel(parseInt(selectElement.value));
+        if (!this.levels || this.levels.length === 0) return;
+        const idx = parseInt(selectElement.value, 10);
+        if (!Number.isNaN(idx)) {
+            this.loadLevel(idx);
+        }
         selectElement.blur(); // 移除焦点，确保键盘能继续控制游戏
     }
 
@@ -384,25 +405,28 @@ class SokobanGame {
     }
     
     nextLevel() {
-        if (this.currentLevelIndex < levelsData.length - 1) {
+        if (this.levels && this.currentLevelIndex < this.levels.length - 1) {
             this.loadLevel(this.currentLevelIndex + 1);
         }
     }
     
     prevLevel() {
-        if (this.currentLevelIndex > 0) {
+        if (this.levels && this.currentLevelIndex > 0) {
             this.loadLevel(this.currentLevelIndex - 1);
         }
     }
 
     updateUI() {
         document.getElementById('stepText').innerText = `步数: ${this.stepCount}`;
-        document.getElementById('btnPrev').disabled = this.currentLevelIndex === 0;
-        document.getElementById('btnNext').disabled = this.currentLevelIndex === levelsData.length - 1;
+        const hasLevels = this.levels && this.levels.length > 0;
+        document.getElementById('btnPrev').disabled = !hasLevels || this.currentLevelIndex === 0;
+        document.getElementById('btnNext').disabled = !hasLevels || this.currentLevelIndex === this.levels.length - 1;
         document.getElementById('btnUndo').disabled = this.history.length === 0;
         
         // 同步下拉菜单的值
-        document.getElementById('levelSelect').value = this.currentLevelIndex;
+        const levelSelect = document.getElementById('levelSelect');
+        levelSelect.value = hasLevels ? this.currentLevelIndex : '';
+        levelSelect.disabled = !hasLevels;
     }
 
     initInput() {
@@ -422,6 +446,44 @@ class SokobanGame {
 }
 
 const game = new SokobanGame('gameCanvas');
+
+function populateFileSelect() {
+    const fileSelect = document.getElementById('fileSelect');
+    fileSelect.innerHTML = '';
+    levelFileOptions.forEach(option => {
+        const opt = document.createElement('option');
+        opt.value = option.value;
+        opt.text = option.label;
+        fileSelect.appendChild(opt);
+    });
+    fileSelect.addEventListener('change', () => {
+        loadLevelFile(fileSelect.value);
+    });
+}
+
+async function loadLevelFile(fileName) {
+    if (!fileName) return;
+    try {
+        const response = await fetch(fileName);
+        if (!response.ok) {
+            throw new Error(`无法加载 ${fileName}`);
+        }
+        const text = await response.text();
+        const levels = text
+            .replace(/\r\n/g, '\n')
+            .split(/\n\s*\n/)
+            .map(block => block.trim())
+            .filter(block => block.length > 0);
+        game.setLevels(levels);
+    } catch (error) {
+        alert(error.message);
+    }
+}
+
+populateFileSelect();
+if (levelFileOptions.length > 0) {
+    loadLevelFile(levelFileOptions[0].value);
+}
 </script>
 </body>
 </html>
